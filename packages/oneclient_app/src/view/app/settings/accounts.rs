@@ -12,9 +12,8 @@ use crate::components::{
 };
 use crate::hooks::{
     AddOfflineAccountKeys, RefreshAccountKeys, RemoveAccountKeys, SetDefaultAccountKeys,
-    accounts_have_microsoft, try_accounts, try_default_account, use_accounts,
-    use_add_offline_account, use_current_account, use_refresh_account, use_remove_account,
-    use_set_default_account,
+    try_accounts, try_default_account, use_accounts, use_add_offline_account, use_current_account,
+    use_refresh_account, use_remove_account, use_set_default_account,
 };
 use crate::i18n::t;
 use crate::theme::{colors, rounded, text_size};
@@ -64,7 +63,6 @@ impl Component for SettingsAccounts {
         let accounts = try_accounts(&accounts_query).unwrap_or_default();
         let default_account = try_default_account(&default_query);
         let default_id = default_account.as_ref().map(|a| a.id);
-        let has_microsoft = accounts_have_microsoft(&accounts);
 
         let offline_name = username.read().trim().to_string();
         let offline_uuid = (!offline_name.is_empty())
@@ -106,7 +104,6 @@ impl Component for SettingsAccounts {
         settings_page()
             .child(hero(
                 default_account,
-                has_microsoft,
                 msa.pending,
                 msa.error.clone(),
                 move |_| show_offline.set(true),
@@ -135,7 +132,6 @@ impl Component for SettingsAccounts {
 
 fn hero(
     account: Option<MinecraftAccount>,
-    has_microsoft: bool,
     microsoft_pending: bool,
     error: Option<String>,
     on_open_offline: impl FnMut(Event<PressEventData>) + 'static,
@@ -222,7 +218,6 @@ fn hero(
                                 .child(
                                     Button::new()
                                         .secondary()
-                                        .enabled(has_microsoft)
                                         .on_press(on_open_offline)
                                         .child(Icon::new(IconType::Plus).size(16.))
                                         .text(t("oneclient.settings.accounts.add_offline")),
@@ -230,13 +225,6 @@ fn hero(
                         )
                         .map(error, |el, msg| {
                             el.child(hint_line(IconType::AlertTriangle, msg, colors::danger()))
-                        })
-                        .maybe(!has_microsoft, |el| {
-                            el.child(hint_line(
-                                IconType::InfoCircle,
-                                t("oneclient.settings.accounts.microsoft_required").to_string(),
-                                colors::fg_secondary(),
-                            ))
                         }),
                 ),
         )
