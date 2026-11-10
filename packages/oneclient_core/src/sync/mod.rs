@@ -932,7 +932,7 @@ pub(crate) async fn apply_existing(
         .as_ref()
         .map(|shared| shared.share.clone())
         .ok_or_else(|| {
-            SharingError::Corrupt("the cloud copy is not a OneClient instance".into())
+            SharingError::Corrupt("the cloud copy is not a Twoclient instance".into())
         })?;
     let cluster = state.clusters.get(cluster_id).await?;
 

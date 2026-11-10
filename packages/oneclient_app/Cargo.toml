@@ -96,7 +96,7 @@ windows = { version = "=0.62.2", features = [
 winresource = "=0.1.31"
 
 [package.metadata.packager]
-product-name = "OneClient"
+product-name = "Twoclient"
 identifier = "org.polyfrost.OneClient"
 category = "Game"
 publisher = "Polyfrost Inc."

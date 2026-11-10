@@ -1373,7 +1373,7 @@ fn removal_notice(disabled: &[String], shared: bool) -> (&'static str, String) {
         return (
             "Content disabled",
             format!(
-                "{names} is gone from {where_from}, so it has been switched off{scope}. Turn it back on in OneClient to restore it."
+                "{names} is gone from {where_from}, so it has been switched off{scope}. Turn it back on in Twoclient to restore it."
             ),
         );
     }
@@ -1381,7 +1381,7 @@ fn removal_notice(disabled: &[String], shared: bool) -> (&'static str, String) {
     (
         "Content disabled",
         format!(
-            "{names} are gone from {where_from}, so they have been switched off{scope}. Turn them back on in OneClient to restore them."
+            "{names} are gone from {where_from}, so they have been switched off{scope}. Turn them back on in Twoclient to restore them."
         ),
     )
 }
@@ -1394,7 +1394,7 @@ fn unrestored_notice(unrestored: &[String]) -> (&'static str, String) {
             "Missing from the game",
             format!(
                 "{names} could not be downloaded again, so the game starts without it. \
-                Reinstall it in OneClient once you are back online."
+                Reinstall it in Twoclient once you are back online."
             ),
         );
     }
@@ -1403,7 +1403,7 @@ fn unrestored_notice(unrestored: &[String]) -> (&'static str, String) {
         "Missing from the game",
         format!(
             "{names} could not be downloaded again, so the game starts without them. \
-            Reinstall them in OneClient once you are back online."
+            Reinstall them in Twoclient once you are back online."
         ),
     )
 }
@@ -2542,7 +2542,7 @@ async fn ensure_links_note(dir: &Path) {
         format!(
             "PLEASE READ CAREFULLY!!!!\n\
             \n\
-            OneClient SPLITS your {noun} folder per version/cluster, so that you can have \
+            Twoclient SPLITS your {noun} folder per version/cluster, so that you can have \
             separate {noun} in each.\n\
             \n\
             Add / remove {noun} IN THESE FOLDERS!!!\n\
@@ -2750,11 +2750,11 @@ async fn ensure_note(dir: &Path, content_type: ContentType) {
         format!(
             "It's empty here, but nothing is broken!\n\
         \n\
-        OneClient keeps your {noun} safe somewhere else (specifically in the global launcher cache)\
+        Twoclient keeps your {noun} safe somewhere else (specifically in the global launcher cache)\
 		and only puts them here while you play. When you close the game, it tidies them away again.\n\
         \n\
-        Want to add {noun}? The best way is to do it right inside OneClient. Or you can drop \
-        files in this folder, and OneClient will pick them up the next time you play.\n"
+        Want to add {noun}? The best way is to do it right inside Twoclient. Or you can drop \
+        files in this folder, and Twoclient will pick them up the next time you play.\n"
         )
     })
     .await
@@ -2880,8 +2880,8 @@ mod tests {
     #[test]
     fn a_symlinked_home_gets_both_prefixes() {
         let body = allowed_symlinks_body(&[
-            PathBuf::from("/home/alex/.local/share/OneClient"),
-            PathBuf::from("/var/home/alex/.local/share/OneClient"),
+            PathBuf::from("/home/alex/.local/share/Twoclient"),
+            PathBuf::from("/var/home/alex/.local/share/Twoclient"),
         ]);
 
         let lines: Vec<&str> = body.lines().collect();
@@ -2897,7 +2897,7 @@ mod tests {
 
     #[test]
     fn an_ordinary_home_gets_one_prefix() {
-        let body = allowed_symlinks_body(&[PathBuf::from("/home/alex/.local/share/OneClient")]);
+        let body = allowed_symlinks_body(&[PathBuf::from("/home/alex/.local/share/Twoclient")]);
 
         assert_eq!(body.lines().count(), 1);
     }

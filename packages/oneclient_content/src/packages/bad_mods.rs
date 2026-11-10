@@ -19,7 +19,7 @@ pub struct BadModList {
     pub bad_mods: Vec<BadMod>,
 }
 
-/// `improvements.json`: mods worth swapping for a OneClient alternative when
+/// `improvements.json`: mods worth swapping for a Twoclient alternative when
 /// an instance comes over from another launcher. Entries share the bad mods
 /// shape, so they are matched and resolved the same way
 #[derive(Debug, Clone, Default, Deserialize)]
