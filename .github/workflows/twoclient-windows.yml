@@ -1,0 +1,151 @@
+name: Twoclient Windows Build
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'v*'
+
+# Build release ini lama (compile penuh + smoke test) - biarin selesai,
+# jangan dibunuh pas ada run baru.
+concurrency:
+  group: twoclient-windows
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: windows-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: Setup Rust
+        uses: ./.github/actions/setup-rust
+        with:
+          save-cache: true
+
+      - name: Install cargo-packager
+        uses: ./.github/actions/install-cargo-tool
+        with:
+          tool: cargo-packager
+          version: 0.11.8
+
+      - name: Read version from Cargo.toml
+        id: version
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION="$(sed -n -E '/^\[workspace\.package\]/,/^\[/ s/^version[[:space:]]*=[[:space:]]*"([^"]+)".*/\1/p' Cargo.toml | head -n1)"
+          if [ -z "$VERSION" ]; then
+            echo "::error::Gagal baca version dari [workspace.package] di Cargo.toml"
+            exit 1
+          fi
+          if [[ "${GITHUB_REF:-}" == refs/tags/v* ]]; then
+            TAGVER="${GITHUB_REF#refs/tags/v}"
+            if [ "$TAGVER" != "$VERSION" ]; then
+              echo "::warning::Tag $TAGVER beda dengan version Cargo.toml ($VERSION). Nama file pakai version Cargo.toml."
+            fi
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Build release binary
+        shell: bash
+        run: cargo build --release --bin oneclient_app
+
+      - name: Stage app-local VC++ runtime
+        shell: bash
+        run: python3 distribution/windows/bundle-crt.py
+
+      - name: Verify staged runtime is Microsoft-signed
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $dlls = @(Get-ChildItem 'target/crt/*.dll')
+          if ($dlls.Count -eq 0) { Write-Error 'no CRT DLLs staged'; exit 1 }
+          foreach ($dll in $dlls) {
+            $sig = Get-AuthenticodeSignature $dll.FullName
+            if ($sig.Status -ne 'Valid' -or $sig.SignerCertificate.Subject -notmatch 'O=Microsoft Corporation') {
+              Write-Error "$($dll.Name): signature $($sig.Status) / bukan Microsoft - nolak"
+              exit 1
+            }
+            Write-Host "$($dll.Name): $($sig.Status)"
+          }
+
+      - name: Package (NSIS installer)
+        shell: bash
+        env:
+          CI: 'true'
+        run: cargo packager --release --formats nsis --verbose
+
+      - name: Smoke-test installer layout
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $exe = Get-ChildItem 'target/release/*-setup.exe' | Select-Object -First 1
+          if (-not $exe) { Write-Error 'installer NSIS gak ketemu di target/release'; exit 1 }
+          $dest = 'C:\twoclient-smoke'
+          Remove-Item -Recurse -Force $dest -ErrorAction SilentlyContinue
+          # NSIS: /S = silent, /D= = install dir (harus argumen terakhir)
+          $p = Start-Process -FilePath $exe.FullName -ArgumentList '/S', "/D=$dest" -Wait -PassThru
+          if ($p.ExitCode -ne 0) { Write-Error "installer exit $($p.ExitCode)"; exit 1 }
+          if (-not (Test-Path "$dest\oneclient_app.exe")) {
+            Write-Error "oneclient_app.exe gak ada di root $dest"
+            exit 1
+          }
+          $n = 0
+          foreach ($dll in @(Get-ChildItem 'target/crt/*.dll')) {
+            if (-not (Test-Path (Join-Path $dest $dll.Name))) {
+              Write-Error "$($dll.Name) gak ke-install di samping oneclient_app.exe"
+              exit 1
+            }
+            $n++
+          }
+          Write-Host "OK: installer valid, $n CRT DLL nempel di samping oneclient_app.exe"
+
+      - name: Collect artifacts
+        id: collect
+        shell: bash
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          mkdir -p dist
+          installers=(target/release/*-setup.exe)
+          if [ ${#installers[@]} -eq 0 ]; then
+            echo "::error::installer NSIS gak ketemu di target/release"
+            exit 1
+          fi
+          cp "${installers[0]}" "dist/Twoclient_${VERSION}_windows_x64-setup.exe"
+
+      - name: Zip portable build
+        shell: pwsh
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory -Force -Path portable | Out-Null
+          Copy-Item target/release/oneclient_app.exe portable/
+          if (Test-Path target/crt) { Copy-Item 'target/crt/*.dll' portable/ }
+          Compress-Archive -Path portable/* `
+            -DestinationPath "dist/Twoclient_${env:VERSION}_windows_x64_portable.zip" -Force
+          Get-ChildItem dist | ForEach-Object { Write-Host $_.Name }
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: twoclient-windows-x64
+          path: dist/*
+
+      - name: Publish ke GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF#refs/tags/}"
+          gh release view "$TAG" >/dev/null 2>&1 \
+            || gh release create "$TAG" --verify-tag --title "Twoclient $TAG" --generate-notes
+          gh release upload "$TAG" dist/* --clobber

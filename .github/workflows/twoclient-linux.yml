@@ -1,0 +1,164 @@
+name: Twoclient Linux Build
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'v*'
+
+concurrency:
+  group: twoclient-linux
+  cancel-in-progress: false
+
+jobs:
+  build:
+    # 22.04 (bukan latest): binary dlink ke glibc lama -> kompatibel ke distro
+    # yang lebih tua, dan libfuse2 masih tersedia buat tooling AppImage.
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: Setup Rust
+        uses: ./.github/actions/setup-rust
+        with:
+          save-cache: true
+
+      # Daftar deps = verbatim dari workflow release upstream + libarchive-tools
+      # (bsdtar, buat .pkg.tar.zst Arch)
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential cmake pkg-config clang python3 \
+            libfontconfig-dev libfreetype-dev \
+            libgl1-mesa-dev libx11-dev libxcursor-dev libxi-dev libxrandr-dev \
+            libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev libdbus-1-dev \
+            libfuse2 libarchive-tools
+
+      - name: Install cargo-packager
+        uses: ./.github/actions/install-cargo-tool
+        with:
+          tool: cargo-packager
+          version: 0.11.8
+
+      - name: Read version from Cargo.toml
+        id: version
+        run: |
+          set -euo pipefail
+          VERSION="$(sed -n -E '/^\[workspace\.package\]/,/^\[/ s/^version[[:space:]]*=[[:space:]]*"([^"]+)".*/\1/p' Cargo.toml | head -n1)"
+          if [ -z "$VERSION" ]; then
+            echo "::error::Gagal baca version dari [workspace.package] di Cargo.toml"
+            exit 1
+          fi
+          if [[ "${GITHUB_REF:-}" == refs/tags/v* ]]; then
+            TAGVER="${GITHUB_REF#refs/tags/v}"
+            if [ "$TAGVER" != "$VERSION" ]; then
+              echo "::warning::Tag $TAGVER beda dengan version Cargo.toml ($VERSION). Nama file pakai version Cargo.toml."
+            fi
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Build release binary
+        run: cargo build --release --bin oneclient_app
+
+      - name: Package (deb + AppImage)
+        env:
+          CI: 'true'
+        run: cargo packager --release --formats deb,appimage --verbose
+
+      # Format "pacman" bawaan cargo-packager cuma bikin .tar.gz + PKGBUILD
+      # (bundle source buat AUR), BUKAN package yang bisa pacman -U.
+      # Jadi .pkg.tar.zst dibikin manual dari payload deb (usr/bin, usr/share/...)
+      # pakai mekanik persis makepkg: .PKGINFO + .MTREE (gzip) + bsdtar --zstd.
+      - name: Build Arch package (.pkg.tar.zst)
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+
+          debdirs=(target/release/.cargo-packager/deb/*/)
+          if [ ${#debdirs[@]} -eq 0 ]; then
+            echo "::error::Output deb gak ketemu di target/release/.cargo-packager/deb/"
+            exit 1
+          fi
+          data="${debdirs[0]}data/usr"
+          if [ ! -d "$data" ]; then
+            echo "::error::$data gak ada - layout deb cargo-packager berubah?"
+            exit 1
+          fi
+
+          rm -rf pkgroot
+          mkdir -p pkgroot/usr
+          cp -r "$data/." pkgroot/usr/
+          chmod -R u=rwX,go=rX pkgroot
+
+          SIZE="$(du -sb pkgroot | cut -f1)"
+
+          cat > pkgroot/.PKGINFO <<EOF
+          pkgname = twoclient
+          pkgver = ${VERSION}-1
+          pkgdesc = Next-generation open source Minecraft launcher
+          url = https://polyfrost.org/projects/oneclient
+          builddate = $(date +%s)
+          packager = Twoclient CI
+          size = ${SIZE}
+          arch = x86_64
+          license = GPL-3.0
+          EOF
+
+          # .MTREE - cara makepkg: daftar file (NUL-separated, sorted) ->
+          # bsdtar mtree -> gzip. Pacman pake ini buat verifikasi file.
+          ( cd pkgroot && find usr -print0 | sort -z \
+              | bsdtar --format=mtree --options='!all,use-bits' --no-recursion --null -cnf - -T - \
+              | gzip -n > .MTREE )
+
+          mkdir -p dist
+          OUT="dist/Twoclient_${VERSION}_linux_x64.pkg.tar.zst"
+          bsdtar --no-fflags --zstd -cf "$OUT" -C pkgroot .PKGINFO .MTREE usr
+
+          echo "--- isi $OUT ---"
+          bsdtar -tf "$OUT"
+
+      - name: Collect + rename artifacts
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          mkdir -p dist
+
+          appimages=(target/release/*.AppImage)
+          if [ ${#appimages[@]} -eq 0 ]; then
+            echo "::error::AppImage gak ketemu di target/release"
+            exit 1
+          fi
+          cp "${appimages[0]}" "dist/Twoclient_${VERSION}_linux_x64.AppImage"
+
+          debs=(target/release/*.deb)
+          if [ ${#debs[@]} -eq 0 ]; then
+            echo "::error::deb gak ketemu di target/release"
+            exit 1
+          fi
+          cp "${debs[0]}" "dist/Twoclient_${VERSION}_linux_x64.deb"
+
+          ls -lh dist/
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: twoclient-linux-x64
+          path: dist/*
+
+      - name: Publish ke GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF#refs/tags/}"
+          gh release view "$TAG" >/dev/null 2>&1 \
+            || gh release create "$TAG" --verify-tag --title "Twoclient $TAG" --generate-notes
+          gh release upload "$TAG" dist/* --clobber
